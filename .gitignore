@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.env
+src/cache/
+src/figs/
+src/state.json
+src/*.log
+src/*.bak*
