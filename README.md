@@ -2,6 +2,8 @@
 
 **Market-neutral mean-reversion across 32 macro ETFs** (equity indexes, sectors, bonds, metals, energy, agriculture, FX). Each asset's return is explained by statistical eigenportfolios and by economic factors; the unexplained residual is modeled as an Ornstein–Uhlenbeck process and traded when it is stretched. The strategy was backtested out-of-sample, stress-tested for robustness, and **has been running live on an Alpaca paper account since April 2026**.
 
+![Live paper trading equity](results/paper-trading/equity_curve.png)
+
 > Applied research project in financial markets (Tec de Monterrey, 2026) by **Santiago Mejía Torres** ([@codemexico](https://github.com/codemexico)) and **Hector Campbell Salas**. Research code, **not investment advice**.
 
 ## Results at a glance
