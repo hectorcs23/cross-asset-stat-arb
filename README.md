@@ -120,6 +120,7 @@ src/run_comparison.py         framework comparison
 src/run_robust_analysis.py    robustness suite and figures
 src/sizing_comparison.py      sizing study; dynamic_sizing.py = drop-in module
 src/paper_trader.py           daily Alpaca runner (v2)
+src/plot_paper_equity.py      paper-trading equity figure from the daily snapshots
 src/test_decide_actions.py    regression tests for the slot-allocation bug
 results/                      backtest figures, walk-forward and sizing tables, paper-trading equity
 docs/                         reports and slides (Spanish)
