@@ -25,7 +25,7 @@ import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -33,8 +33,11 @@ import pandas as pd
 
 try:
     from alpaca.trading.client import TradingClient
-    from alpaca.trading.requests import MarketOrderRequest, GetAssetsRequest
-    from alpaca.trading.enums import OrderSide, TimeInForce, AssetStatus, AssetClass
+    from alpaca.trading.requests import (MarketOrderRequest, GetAssetsRequest,
+                                         GetOrdersRequest)
+    from alpaca.trading.enums import (OrderSide, TimeInForce, AssetStatus,
+                                      AssetClass, QueryOrderStatus)
+    from alpaca.common.enums import Sort
     from alpaca.common.exceptions import APIError
 except ImportError:
     sys.exit("Falta instalar alpaca-py: pip install alpaca-py")
@@ -143,6 +146,62 @@ class TraderState:
 # Reconciliación state <-> Alpaca al inicio
 # =====================================================================
 
+def entry_dates_from_fills(trading: TradingClient,
+                           symbols: set) -> Dict[str, datetime]:
+    """
+    Fecha de apertura real de cada posición, reconstruida de los fills de Alpaca.
+
+    Sin esto, un state.json ausente (contenedor nuevo, otra máquina, disco
+    borrado) hace que todo se adopte con entry_date=hoy en cada corrida, el
+    reloj de tenencia nunca avanza y MAX_HOLDING_DAYS no cierra nada: la
+    estrategia se queda sin su salida por timeout sin una sola línea de error.
+
+    Se reproducen los fills en orden y se marca el momento en que el libro pasa
+    de plano al lado actual (o voltea de lado); ese es el nacimiento de la
+    posición que está abierta hoy.
+    """
+    if not symbols:
+        return {}
+
+    try:
+        orders = trading.get_orders(filter=GetOrdersRequest(
+            status=QueryOrderStatus.CLOSED,
+            symbols=sorted(symbols),
+            direction=Sort.ASC,
+            limit=500,
+        ))
+    except APIError as e:
+        logging.error(f"No se pudo leer el historial de órdenes: {e}")
+        return {}
+
+    fills: Dict[str, List[Tuple[datetime, float]]] = {}
+    for o in orders:
+        if o.filled_at is None or o.filled_qty is None:
+            continue
+        qty = float(o.filled_qty)
+        if qty == 0:
+            continue
+        signed = qty if o.side == OrderSide.BUY else -qty
+        fills.setdefault(o.symbol, []).append((o.filled_at, signed))
+
+    opened: Dict[str, datetime] = {}
+    for sym, events in fills.items():
+        events.sort(key=lambda e: e[0])
+        running = 0.0
+        birth: Optional[datetime] = None
+        for ts, signed in events:
+            prev = running
+            running += signed
+            if running == 0:
+                birth = None                                  # quedó plano
+            elif prev == 0 or (prev > 0) != (running > 0):
+                birth = ts                                    # abrió o volteó
+        if birth is not None:
+            opened[sym] = birth
+
+    return opened
+
+
 def reconcile_state_with_alpaca(state: TraderState,
                                  trading: TradingClient,
                                  today: datetime) -> TraderState:
@@ -164,13 +223,24 @@ def reconcile_state_with_alpaca(state: TraderState,
 
     if orphan:
         logging.warning(f"Adoptando {len(orphan)} huérfanos: {sorted(orphan)}")
+        # La fecha de entrada sale de los fills, no de hoy: adoptar con hoy
+        # reinicia el reloj de tenencia y desactiva MAX_HOLDING_DAYS.
+        opened = entry_dates_from_fills(trading, orphan)
         for sym in orphan:
             p = alpaca_positions[sym]
             qty = float(p.qty)
+            birth = opened.get(sym)
+            if birth is None:
+                logging.warning(f"  {sym}: sin fill en el historial, "
+                                f"usando hoy como entrada")
+            else:
+                logging.info(f"  {sym}: entrada recuperada "
+                             f"{birth.astimezone(NY_TZ).date()} "
+                             f"({(today.date() - birth.astimezone(NY_TZ).date()).days}d)")
             state.positions[sym] = asdict(OpenPosition(
                 symbol=sym,
                 side=+1 if qty > 0 else -1,
-                entry_date=today.isoformat(),
+                entry_date=(birth.astimezone(NY_TZ) if birth else today).isoformat(),
                 entry_price=float(p.avg_entry_price),
                 target_weight=1.0 / MAX_POSITIONS,
             ))

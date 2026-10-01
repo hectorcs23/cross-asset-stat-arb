@@ -45,12 +45,18 @@ def _install_stubs() -> None:
     mod("alpaca.trading")
     mod("alpaca.common")
     mod("alpaca.trading.client", TradingClient=object)
-    mod("alpaca.trading.requests", MarketOrderRequest=object, GetAssetsRequest=object)
+    mod("alpaca.trading.requests", MarketOrderRequest=object,
+        GetAssetsRequest=object,
+        # acepta kwargs como el constructor real: con `object` el TypeError
+        # se lo tragaba el except APIError y el helper devolvía {} en silencio
+        GetOrdersRequest=lambda **kw: types.SimpleNamespace(**kw))
     mod("alpaca.trading.enums",
         OrderSide=types.SimpleNamespace(SELL=E("sell"), BUY=E("buy")),
         TimeInForce=types.SimpleNamespace(DAY=E("day"), OPG=E("opg")),
         AssetStatus=types.SimpleNamespace(ACTIVE="active"),
-        AssetClass=types.SimpleNamespace(US_EQUITY="us_equity"))
+        AssetClass=types.SimpleNamespace(US_EQUITY="us_equity"),
+        QueryOrderStatus=types.SimpleNamespace(CLOSED=E("closed")))
+    mod("alpaca.common.enums", Sort=types.SimpleNamespace(ASC=E("asc")))
     mod("alpaca.common.exceptions", APIError=Exception)
     mod("cross_asset_statarb",
         flat_universe=lambda: [],
@@ -213,6 +219,41 @@ def test_full_book_no_orders():
     print("    0 órdenes, igual que el log real de esa noche")
 
 
+def test_entry_dates_from_fills():
+    """
+    El reloj de tenencia tiene que salir del fill real, no de hoy. Con
+    state.json ausente (contenedor nuevo) la versión previa adoptaba todo con
+    entry_date=hoy, así que MAX_HOLDING_DAYS no cerraba nunca.
+    """
+    def order(sym, day, qty, side):
+        return types.SimpleNamespace(
+            symbol=sym, filled_qty=str(qty), side=side,
+            filled_at=datetime(2026, 8, day, 14, 30, tzinfo=NY))
+
+    B, S = PT.OrderSide.BUY, PT.OrderSide.SELL
+    orders = [
+        # GLD: abre, cierra completo, reabre -> vale la reapertura
+        order("GLD", 3, 100, B), order("GLD", 10, 100, S), order("GLD", 20, 80, B),
+        # TLT: abre largo y voltea a corto -> vale el volteo
+        order("TLT", 5, 50, B), order("TLT", 12, 90, S),
+        # SHY: abre en dos parcialidades -> vale la primera
+        order("SHY", 7, 40, B), order("SHY", 9, 60, B),
+        # DBA: abrió y cerró, hoy está plana -> no debe traer fecha
+        order("DBA", 4, 30, B), order("DBA", 6, 30, S),
+    ]
+    trading = types.SimpleNamespace(get_orders=lambda filter=None: orders)
+
+    got = PT.entry_dates_from_fills(trading, {"GLD", "TLT", "SHY", "DBA"})
+    days = {s: d.astimezone(NY).day for s, d in got.items()}
+
+    assert days.get("GLD") == 20, f"GLD: esperaba la reapertura (20), dio {days.get('GLD')}"
+    assert days.get("TLT") == 12, f"TLT: esperaba el volteo (12), dio {days.get('TLT')}"
+    assert days.get("SHY") == 7, f"SHY: esperaba la 1a parcialidad (7), dio {days.get('SHY')}"
+    assert "DBA" not in got, "DBA quedó plana: no debe tener fecha de entrada"
+    print(f"    GLD={days['GLD']} (reapertura)  TLT={days['TLT']} (volteo)  "
+          f"SHY={days['SHY']} (1a parcial)  DBA plana omitida")
+
+
 TESTS = [
     ("abre ambos lados", test_opens_both_sides),
     ("no-shortable no quema slot", test_unshortable_does_not_burn_slot),
@@ -220,6 +261,7 @@ TESTS = [
     ("cooldown expira", test_cooldown_expires),
     ("tope de neto con señal unilateral", test_net_cap_when_one_sided),
     ("libro lleno, cero órdenes", test_full_book_no_orders),
+    ("fecha de entrada desde los fills", test_entry_dates_from_fills),
 ]
 
 
