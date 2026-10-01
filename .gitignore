@@ -11,6 +11,10 @@ src/*.bak*
 .venv/
 venv/
 
-# salidas regenerables de run_comparison.py (las figuras versionadas viven en results/)
+# salidas regenerables que los scripts escriben en src/ al correr
+# (las copias versionadas viven en results/)
 src/equity_curves.png
 src/factor_exposures.csv
+src/walk_forward_results.csv
+src/sizing_metrics.csv
+src/sizing_comparison.png
