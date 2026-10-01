@@ -6,3 +6,11 @@ src/figs/
 src/state.json
 src/*.log
 src/*.bak*
+
+# entornos virtuales locales
+.venv/
+venv/
+
+# salidas regenerables de run_comparison.py (las figuras versionadas viven en results/)
+src/equity_curves.png
+src/factor_exposures.csv
