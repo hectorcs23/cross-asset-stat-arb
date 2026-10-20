@@ -25,7 +25,7 @@ import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -462,11 +462,38 @@ def decide_actions(z_ens: pd.Series,
 # Ejecución en Alpaca
 # =====================================================================
 
-def get_tradable_shortable(trading: TradingClient) -> tuple[set[str], set[str]]:
-    req = GetAssetsRequest(status=AssetStatus.ACTIVE, asset_class=AssetClass.US_EQUITY)
-    assets = trading.get_all_assets(req)
-    tradable = {a.symbol for a in assets if a.tradable}
-    shortable = {a.symbol for a in assets if a.tradable and a.shortable}
+def get_tradable_shortable(trading: TradingClient,
+                           symbols: Iterable[str]) -> tuple[set[str], set[str]]:
+    """
+    Consulta solo los símbolos del universo, uno por uno.
+
+    Antes pedía la lista completa de renta variable de EEUU. Pydantic valida la
+    respuesta entera, así que basta UN activo ajeno al universo con un exchange
+    que el enum de alpaca-py no conozca para tumbar la llamada completa: en
+    octubre de 2026 Alpaca empezó a listar en TXSE (Texas Stock Exchange) y los
+    5 activos resultantes dejaron al bot sin operar durante días, fallando
+    después de calcular la señal y antes de mandar órdenes.
+
+    Preguntar por los 32 que importan es inmune a cualquier exchange nuevo en
+    símbolos que no se operan, y además evita parsear ~11k activos por corrida.
+    """
+    tradable: set = set()
+    shortable: set = set()
+
+    for sym in sorted(symbols):
+        try:
+            asset = trading.get_asset(sym)
+        except Exception as e:
+            # Lo que no se pudo verificar NO se asume operable: quedarse corto
+            # de un símbolo es barato, mandar una orden que el bróker rechaza no.
+            logging.warning(f"  {sym}: no se pudo consultar el activo "
+                            f"({type(e).__name__}), se excluye de la corrida")
+            continue
+        if asset.tradable:
+            tradable.add(sym)
+            if asset.shortable:
+                shortable.add(sym)
+
     return tradable, shortable
 
 
@@ -565,7 +592,7 @@ def run(dry_run: bool = True, panic: bool = False):
         direction = "LONG " if z < 0 else "SHORT"
         logging.info(f"  {direction} {sym:6s}  z={z:+.2f}")
 
-    tradable, shortable = get_tradable_shortable(trading)
+    tradable, shortable = get_tradable_shortable(trading, z_ens.index)
     missing = set(z_ens.index) - tradable
     if missing:
         logging.warning(f"No tradables en Alpaca: {missing}")

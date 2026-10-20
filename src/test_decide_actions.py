@@ -254,6 +254,40 @@ def test_entry_dates_from_fills():
           f"SHY={days['SHY']} (1a parcial)  DBA plana omitida")
 
 
+def test_tradable_shortable_only_queries_universe():
+    """
+    Un exchange desconocido en un activo AJENO al universo no debe tumbar la
+    corrida: eso fue TXSE en octubre 2026, que pedía la lista completa de
+    renta variable de EEUU y pydantic reventaba la respuesta entera.
+
+    Y lo que no se pudo verificar no se asume operable.
+    """
+    pedidos = []
+
+    def get_asset(sym):
+        pedidos.append(sym)
+        if sym == "FXY":
+            raise RuntimeError("ValidationError: input_value='TXSE'")
+        return types.SimpleNamespace(
+            symbol=sym, tradable=sym != "DIA", shortable=sym not in ("USO", "WEAT"))
+
+    trading = types.SimpleNamespace(
+        get_asset=get_asset,
+        get_all_assets=lambda req: (_ for _ in ()).throw(
+            AssertionError("no debe pedir la lista completa de activos")))
+
+    universo = ["SPY", "USO", "WEAT", "DIA", "FXY"]
+    tradable, shortable = PT.get_tradable_shortable(trading, universo)
+
+    assert pedidos == sorted(universo), f"consultó {pedidos}, esperaba solo el universo"
+    assert "FXY" not in tradable, "FXY falló al consultarse: no debe asumirse operable"
+    assert "DIA" not in tradable, "DIA no es tradable"
+    assert tradable == {"SPY", "USO", "WEAT"}, f"tradable={sorted(tradable)}"
+    assert shortable == {"SPY"}, f"shortable={sorted(shortable)}"
+    print(f"    consultó {len(pedidos)} símbolos, nunca la lista completa; "
+          f"FXY (exchange desconocido) excluido")
+
+
 TESTS = [
     ("abre ambos lados", test_opens_both_sides),
     ("no-shortable no quema slot", test_unshortable_does_not_burn_slot),
@@ -262,6 +296,7 @@ TESTS = [
     ("tope de neto con señal unilateral", test_net_cap_when_one_sided),
     ("libro lleno, cero órdenes", test_full_book_no_orders),
     ("fecha de entrada desde los fills", test_entry_dates_from_fills),
+    ("solo consulta el universo, no todo EEUU", test_tradable_shortable_only_queries_universe),
 ]
 
 
