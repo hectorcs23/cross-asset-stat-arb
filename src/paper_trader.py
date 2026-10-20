@@ -63,7 +63,15 @@ ENTRY_Z = 0.3
 EXIT_Z = 0.05
 MAX_POSITIONS = 8
 MAX_HOLDING_DAYS = 20
-GROSS_LEVERAGE = 1.0
+# 2x bruto, por decisión explícita. Con 8 posiciones son 25% cada una, así que
+# MAX_POSITION_PCT tiene que dar ese espacio o el bruto se satura: con el tope
+# en 20% cualquier valor >=2.0 produce el MISMO libro de 1.6x.
+#
+# Reg T pide 50% de margen inicial, así que 2x bruto consume el 100% del equity
+# y deja cero colchón. El backtest 2017-2026 da CAGR 9.4% (vs 4.6% a 1x) con el
+# MISMO Sharpe +0.37 y maxDD -50.7% (vs -29.8%), y no modela interés de margen
+# ni liquidación forzada.
+GROSS_LEVERAGE = 2.0
 
 # Neutralidad: |suma de lados| permitida en el libro.
 # 8 posiciones con MAX_NET_POSITIONS=2 => como mucho 5 largos / 3 cortos.
@@ -75,7 +83,18 @@ MAX_NET_POSITIONS = 2
 # corrida => rechazo 40310000 (wash trade) y round-trip gratis.
 TIMEOUT_COOLDOWN_DAYS = 3
 
-MAX_POSITION_PCT = 0.20
+# Tope de TAMAÑO al abrir: 2.0/8 = 25% por posición.
+MAX_POSITION_PCT = 0.25
+
+# Umbral de ALARMA por posición, deliberadamente por encima del de tamaño.
+# La alarma existe para cachar doble ejecución (que daría ~50%, el doble del
+# objetivo), no la deriva normal de precio. Igualarlo a MAX_POSITION_PCT haría
+# que cada corrida gritara "posible doble ejecución" por un movimiento al alza.
+POSITION_ALERT_PCT = 0.32
+
+# El bruto puede pasarse del objetivo por deriva de precio. Más de este múltiplo
+# del objetivo y el margen inicial se acerca al equity: ahí hay que mirar.
+GROSS_ALERT_MULT = 1.10
 MAX_DAILY_ORDERS = 30
 SIGNAL_SANITY_LIMIT = 10.0
 MIN_TRADE_NOTIONAL = 100.0
@@ -325,6 +344,20 @@ def audit_exposure(trading: TradingClient, portfolio_value: float) -> None:
         f"neta ${net:+,.0f} ({net / portfolio_value:+.0%})"
     )
 
+    # El bruto total no se vigilaba contra GROSS_LEVERAGE. A 1x sobraba margen
+    # y daba igual; a 2x el margen inicial ES el equity, así que un bruto que
+    # se pasa por deriva es la diferencia entre operar y ser liquidado.
+    gross_mult = gross / portfolio_value if portfolio_value else 0.0
+    if gross_mult > GROSS_LEVERAGE * GROSS_ALERT_MULT:
+        margen = gross * 0.5
+        logging.error(
+            f"BRUTO FUERA DE OBJETIVO: {gross_mult:.2f}x vs objetivo "
+            f"{GROSS_LEVERAGE:.2f}x. Margen inicial Reg T ${margen:,.0f} "
+            f"sobre ${portfolio_value:,.0f} de equity "
+            f"({margen / portfolio_value:.0%}) — riesgo de rechazo de "
+            f"órdenes o liquidación forzada."
+        )
+
     if gross > 0 and abs(net) / gross > 0.5:
         logging.warning(
             f"LIBRO DIRECCIONAL: neto/bruto = {abs(net) / gross:.0%}. "
@@ -336,10 +369,11 @@ def audit_exposure(trading: TradingClient, portfolio_value: float) -> None:
     # tamaño sin que ningún breaker se entere.
     for p in positions:
         pct = abs(float(p.market_value)) / portfolio_value
-        if pct > MAX_POSITION_PCT:
+        if pct > POSITION_ALERT_PCT:
             logging.error(
-                f"  {p.symbol}: {pct:.1%} del portafolio > tope "
-                f"{MAX_POSITION_PCT:.0%} (qty={float(p.qty):+.0f}). "
+                f"  {p.symbol}: {pct:.1%} del portafolio > alarma "
+                f"{POSITION_ALERT_PCT:.0%} (objetivo al abrir "
+                f"{MAX_POSITION_PCT:.0%}, qty={float(p.qty):+.0f}). "
                 f"Posible doble ejecución — revisar manualmente."
             )
 

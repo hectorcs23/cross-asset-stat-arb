@@ -288,6 +288,37 @@ def test_tradable_shortable_only_queries_universe():
           f"FXY (exchange desconocido) excluido")
 
 
+def test_sizing_delivers_target_gross():
+    """
+    El tope por posición recorta el tamaño ANTES de alcanzar el bruto objetivo:
+    con MAX_POSITION_PCT=0.20, cualquier GROSS_LEVERAGE >= 2.0 producía el mismo
+    libro de 1.6x, en silencio. Esto ancla que el tope deje pasar el objetivo,
+    cualquiera que sea el apalancamiento configurado.
+    """
+    eq, precio = 100_000.0, 100.0
+    each = PT.GROSS_LEVERAGE / PT.MAX_POSITIONS
+
+    assert PT.MAX_POSITION_PCT >= each, (
+        f"el tope {PT.MAX_POSITION_PCT:.0%} recorta el objetivo {each:.1%} "
+        f"por posición: el bruto se saturaría en "
+        f"{PT.MAX_POSITION_PCT * PT.MAX_POSITIONS:.2f}x en vez de "
+        f"{PT.GROSS_LEVERAGE:.2f}x")
+
+    qty = PT.compute_order_qty(+1, each, eq, precio)
+    bruto = (qty * precio) * PT.MAX_POSITIONS / eq
+    assert abs(bruto - PT.GROSS_LEVERAGE) < 0.02, \
+        f"bruto real {bruto:.2f}x != objetivo {PT.GROSS_LEVERAGE:.2f}x"
+
+    # La alarma por posición va por encima del tope de tamaño, o grita en cada
+    # corrida por deriva de precio en vez de cachar doble ejecución.
+    assert PT.POSITION_ALERT_PCT > PT.MAX_POSITION_PCT, \
+        "POSITION_ALERT_PCT debe ser > MAX_POSITION_PCT"
+
+    print(f"    objetivo {PT.GROSS_LEVERAGE:.1f}x = {each:.1%}/pos -> "
+          f"bruto real {bruto:.2f}x; alarma {PT.POSITION_ALERT_PCT:.0%} "
+          f"sobre tope {PT.MAX_POSITION_PCT:.0%}")
+
+
 TESTS = [
     ("abre ambos lados", test_opens_both_sides),
     ("no-shortable no quema slot", test_unshortable_does_not_burn_slot),
@@ -297,6 +328,7 @@ TESTS = [
     ("libro lleno, cero órdenes", test_full_book_no_orders),
     ("fecha de entrada desde los fills", test_entry_dates_from_fills),
     ("solo consulta el universo, no todo EEUU", test_tradable_shortable_only_queries_universe),
+    ("el tamaño entrega el bruto objetivo", test_sizing_delivers_target_gross),
 ]
 
 
