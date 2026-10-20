@@ -98,7 +98,7 @@ The strategy was the third phase of a semester-long project. The reports (Spanis
 ## Run it
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.lock.txt   # exact validated environment
 cd src
 python run_comparison.py         # the three frameworks side by side
 python run_robust_analysis.py    # ensemble, sensitivity, bootstrap, walk-forward -> figs/
@@ -107,10 +107,19 @@ python test_decide_actions.py    # regression tests, no network
 
 # paper trading (needs Alpaca paper keys)
 export APCA_API_KEY_ID=...  APCA_API_SECRET_KEY=...
-python paper_trader.py --dry-run
+python paper_trader.py           # dry-run is the default
+python paper_trader.py --live     # actually submits orders
 ```
 
 Prices come from Yahoo Finance via `yfinance`. The first run downloads data and caches z-scores in `src/cache/`.
+
+Versions are pinned. `requirements.txt` holds the seven direct dependencies and
+`requirements.lock.txt` the whole environment, transitive packages included —
+the runner installs the lock. A daily bot that trades unattended cannot afford a
+silent upgrade: the live runs went eight days without submitting an order in
+October 2026 when a broker-side change surfaced as a `ValidationError` in
+pydantic, which arrives indirectly through `alpaca-py`. Both files were
+validated together on Python 3.11.
 
 ## Layout
 

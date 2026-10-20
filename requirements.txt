@@ -1,7 +1,26 @@
-numpy
-pandas
-scipy
-statsmodels
-matplotlib
-yfinance
-alpaca-py
+# Dependencias directas, con versión fija.
+#
+# El bot opera solo todos los días, así que una actualización silenciosa es un
+# riesgo real y no una molestia: en octubre de 2026 la corrida diaria estuvo
+# ocho días sin mandar órdenes por un cambio del lado del bróker que reventó
+# en pydantic, una dependencia indirecta.
+#
+# Para reproducir el entorno exacto que se validó, usa el candado completo:
+#     pip install -r requirements.lock.txt
+# Este archivo sirve para leer y actualizar; el candado es el que manda.
+#
+# Validado con Python 3.11 el 2026-10-20: suite de robustez completa, los 8
+# tests de regresión y una corrida del paper trader de punta a punta.
+#
+# Para subir versiones: cambia aquí, reinstala, corre
+#   python test_decide_actions.py && python paper_trader.py   (dry-run)
+# y regenera el candado con
+#   pip freeze --all --exclude-editable > requirements.lock.txt
+
+numpy==2.4.6
+pandas==3.0.6
+scipy==1.17.1
+statsmodels==0.15.0
+matplotlib==3.11.2
+yfinance==1.7.0
+alpaca-py==0.44.0
