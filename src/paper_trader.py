@@ -55,6 +55,8 @@ from cross_asset_statarb import (
 NY_TZ = ZoneInfo("America/New_York")
 
 STATE_FILE = Path("state.json")
+SNAPSHOT_FILE = (Path(__file__).resolve().parents[1]
+                 / "results" / "paper-trading" / "equity_snapshots.csv")
 LOG_FILE = Path("paper_trader.log")
 
 ENTRY_Z = 0.3
@@ -145,6 +147,45 @@ class TraderState:
 # =====================================================================
 # Reconciliación state <-> Alpaca al inicio
 # =====================================================================
+
+def record_equity_snapshot(equity: float, today: datetime) -> None:
+    """
+    Registra el equity del día en results/paper-trading/equity_snapshots.csv.
+
+    Antes no lo escribía nadie: plot_paper_equity.py solo lee ese archivo, así
+    que el registro dependía de que alguien lo llenara a mano y la curva del
+    README se quedó congelada semanas. El equity es un hecho de la cuenta,
+    independiente de si salieron órdenes, así que se guarda en toda corrida.
+
+    Idempotente por fecha: volver a correr el mismo día reemplaza la fila en
+    lugar de duplicarla.
+    """
+    day = today.date().isoformat()
+    rows: Dict[str, str] = {}
+
+    if SNAPSHOT_FILE.exists():
+        for line in SNAPSHOT_FILE.read_text().splitlines():
+            if not line.strip() or line.startswith("date,"):
+                continue
+            d, _, v = line.partition(",")
+            rows[d.strip()] = v.strip()
+
+    previo = rows.get(day)
+    rows[day] = f"{equity:.2f}"
+
+    try:
+        SNAPSHOT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SNAPSHOT_FILE.write_text(
+            "date,equity\n"
+            + "".join(f"{d},{rows[d]}\n" for d in sorted(rows)))
+    except OSError as e:
+        logging.error(f"No se pudo escribir el snapshot de equity: {e}")
+        return
+
+    accion = "actualizado" if previo is not None else "registrado"
+    logging.info(f"Snapshot de equity {accion}: {day} = ${equity:,.2f} "
+                 f"({len(rows)} filas en total)")
+
 
 def entry_dates_from_fills(trading: TradingClient,
                            symbols: set) -> Dict[str, datetime]:
@@ -557,6 +598,10 @@ def run(dry_run: bool = True, panic: bool = False):
     logging.info("=" * 60)
     logging.info(f"Paper trader v2 — {'DRY-RUN' if dry_run else 'LIVE'}")
     logging.info(f"Portfolio value: ${portfolio_value:,.2f}   Cash: ${cash:,.2f}")
+
+    # Al principio y no al final: así el punto queda registrado aunque la
+    # corrida aborte más adelante por el breaker o por un sanity check.
+    record_equity_snapshot(portfolio_value, datetime.now(NY_TZ))
 
     if panic:
         logging.warning("!!! PANIC MODE !!!")
